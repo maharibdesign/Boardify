@@ -1,187 +1,184 @@
--- Boardify SQL Schema
--- This schema is designed for a multi-tenant, collaborative task management app.
--- RLS (Row-Level Security) is enabled and configured for all tables.
+-- Boardify SQL Schema (Version 3.1 - Final)
 
--- 1. Create custom types (enums) for clarity and data integrity.
-CREATE TYPE subscription_plan AS ENUM ('free', 'pro');
-CREATE TYPE board_role AS ENUM ('admin', 'editor', 'viewer');
-CREATE TYPE task_priority AS ENUM ('low', 'medium', 'high');
+-- 1. Create custom types (enums)
+CREATE TYPE public.subscription_plan AS ENUM ('free', 'pro');
+CREATE TYPE public.board_role AS ENUM ('admin', 'editor', 'viewer');
+CREATE TYPE public.task_priority AS ENUM ('low', 'medium', 'high');
 
 -- 2. Create the 'users' table.
--- Stores user-specific information, linked to their Telegram ID.
-CREATE TABLE users (
+-- This table stores public profile information.
+CREATE TABLE public.users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    telegram_id BIGINT UNIQUE NOT NULL,
+    -- This links to the Supabase auth user.
+    auth_id UUID UNIQUE NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    telegram_id BIGINT UNIQUE,
+    username VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    subscription subscription_plan NOT NULL DEFAULT 'free',
+    subscription public.subscription_plan NOT NULL DEFAULT 'free',
     pro_expiry_date TIMESTAMPTZ
 );
 
 -- 3. Create the 'boards' table.
--- Each board is a top-level container for tasks.
-CREATE TABLE boards (
+CREATE TABLE public.boards (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    owner_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- 4. Create the 'board_members' table (join table).
--- Manages user access and permissions for each board.
-CREATE TABLE board_members (
-    board_id UUID NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    role board_role NOT NULL DEFAULT 'editor',
+CREATE TABLE public.board_members (
+    board_id UUID NOT NULL REFERENCES public.boards(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    role public.board_role NOT NULL DEFAULT 'editor',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (board_id, user_id)
 );
 
 -- 5. Create the 'statuses' table.
--- Represents the columns on a Kanban board (e.g., "To Do", "In Progress").
-CREATE TABLE statuses (
+CREATE TABLE public.statuses (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    board_id UUID NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+    board_id UUID NOT NULL REFERENCES public.boards(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL,
-    position INT NOT NULL, -- For ordering columns
+    position INT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- 6. Create the 'tasks' table.
--- Represents a single task card ("brick").
-CREATE TABLE tasks (
+CREATE TABLE public.tasks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    board_id UUID NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
-    status_id UUID NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
+    board_id UUID NOT NULL REFERENCES public.boards(id) ON DELETE CASCADE,
+    status_id UUID NOT NULL REFERENCES public.statuses(id) ON DELETE CASCADE,
     title VARCHAR(255) NOT NULL,
     description TEXT,
-    priority task_priority NOT NULL DEFAULT 'medium',
+    priority public.task_priority NOT NULL DEFAULT 'medium',
     due_date DATE,
-    position INT NOT NULL, -- For ordering tasks within a status column
+    position INT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 7. Create the 'task_assignees' table (join table).
--- Links users to specific tasks they are assigned to.
-CREATE TABLE task_assignees (
-    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+-- 7. Create 'task_assignees' table
+CREATE TABLE public.task_assignees (
+    task_id UUID NOT NULL REFERENCES public.tasks(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (task_id, user_id)
 );
 
--- 8. Create the 'referrals' table.
--- Tracks user referrals for the growth mechanic.
-CREATE TABLE referrals (
+-- 8. Create 'referrals' table
+CREATE TABLE public.referrals (
     id BIGSERIAL PRIMARY KEY,
-    referrer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    new_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    referrer_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    new_user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (referrer_id, new_user_id)
 );
 
--- 9. SETUP ROW-LEVEL SECURITY (RLS) -- THIS IS CRUCIAL FOR SECURITY.
 
--- Helper function to get the current authenticated user's ID
-CREATE OR REPLACE FUNCTION auth.get_user_id()
+-- 9. SETUP AUTH TRIGGERS AND ROW-LEVEL SECURITY (RLS)
+
+-- Helper function to get our app-specific user ID from the Supabase auth ID.
+CREATE OR REPLACE FUNCTION public.get_user_app_id()
 RETURNS UUID AS $$
+DECLARE
+  app_user_id UUID;
 BEGIN
-  RETURN auth.uid();
+  SELECT id INTO app_user_id FROM public.users WHERE auth_id = auth.uid() LIMIT 1;
+  RETURN app_user_id;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Enable RLS for all relevant tables
-ALTER TABLE users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE boards ENABLE ROW LEVEL SECURITY;
-ALTER TABLE board_members ENABLE ROW LEVEL SECURITY;
-ALTER TABLE statuses ENABLE ROW LEVEL SECURITY;
-ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
-ALTER TABLE task_assignees ENABLE ROW LEVEL SECURITY;
-ALTER TABLE referrals ENABLE ROW LEVEL SECURITY;
 
--- RLS Policies for 'users'
-CREATE POLICY "Users can view and edit their own data"
-    ON users FOR ALL
-    USING (id = auth.get_user_id())
-    WITH CHECK (id = auth.get_user_id());
+-- This trigger automatically creates a user profile entry when a new user signs up.
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.users (auth_id, username)
+  VALUES (new.id, new.email);
+  RETURN new;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- RLS Policies for 'boards'
-CREATE POLICY "Users can view boards they are members of"
-    ON boards FOR SELECT
-    USING (EXISTS (
-        SELECT 1 FROM board_members
-        WHERE board_members.board_id = boards.id AND board_members.user_id = auth.get_user_id()
-    ));
+-- Check if the trigger exists before creating it to avoid errors on re-runs
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'on_auth_user_created') THEN
+    CREATE TRIGGER on_auth_user_created
+      AFTER INSERT ON auth.users
+      FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+  END IF;
+END $$;
 
-CREATE POLICY "Board admins can update their boards"
-    ON boards FOR UPDATE
-    USING (EXISTS (
-        SELECT 1 FROM board_members
-        WHERE board_members.board_id = boards.id
-        AND board_members.user_id = auth.get_user_id()
-        AND board_members.role = 'admin'
-    ));
 
-CREATE POLICY "Users can create new boards"
-    ON boards FOR INSERT
-    WITH CHECK (true); -- Further checks will be handled in app logic/triggers
+-- Enable RLS for all tables
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.boards ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.board_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.statuses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.task_assignees ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.referrals ENABLE ROW LEVEL SECURITY;
 
--- RLS Policies for 'board_members'
-CREATE POLICY "Users can view memberships of boards they belong to"
-    ON board_members FOR SELECT
-    USING (EXISTS (
-        SELECT 1 FROM board_members bm
-        WHERE bm.board_id = board_members.board_id AND bm.user_id = auth.get_user_id()
-    ));
 
-CREATE POLICY "Board admins can manage members"
-    ON board_members FOR ALL
-    USING (EXISTS (
-        SELECT 1 FROM board_members bm
-        WHERE bm.board_id = board_members.board_id
-        AND bm.user_id = auth.get_user_id()
-        AND bm.role = 'admin'
-    ));
+-- RLS POLICIES
 
--- RLS Policies for 'statuses' and 'tasks'
--- The logic is the same: you can access the item if you can access the parent board.
-CREATE POLICY "Users can view statuses of boards they are members of"
-    ON statuses FOR SELECT
-    USING (EXISTS (
-        SELECT 1 FROM board_members
-        WHERE board_members.board_id = statuses.board_id AND board_members.user_id = auth.get_user_id()
-    ));
-CREATE POLICY "Board editors/admins can manage statuses"
-    ON statuses FOR ALL
-    USING (EXISTS (
-        SELECT 1 FROM board_members
-        WHERE board_members.board_id = statuses.board_id
-        AND board_members.user_id = auth.get_user_id()
-        AND (board_members.role = 'admin' OR board_members.role = 'editor')
-    ));
+-- USERS: Users can see their own profile and update it.
+CREATE POLICY "Users can view and update their own profile" ON public.users
+  FOR ALL USING (auth_id = auth.uid());
 
-CREATE POLICY "Users can view tasks of boards they are members of"
-    ON tasks FOR SELECT
-    USING (EXISTS (
-        SELECT 1 FROM board_members
-        WHERE board_members.board_id = tasks.board_id AND board_members.user_id = auth.get_user_id()
-    ));
-CREATE POLICY "Board editors/admins can manage tasks"
-    ON tasks FOR ALL
-    USING (EXISTS (
-        SELECT 1 FROM board_members
-        WHERE board_members.board_id = tasks.board_id
-        AND board_members.user_id = auth.get_user_id()
-        AND (board_members.role = 'admin' OR board_members.role = 'editor')
-    ));
+-- BOARDS:
+CREATE POLICY "Users can view boards they are members of" ON public.boards
+  FOR SELECT USING (EXISTS (
+    SELECT 1 FROM public.board_members
+    WHERE board_members.board_id = boards.id AND board_members.user_id = public.get_user_app_id()
+  ));
 
--- RLS Policies for other tables can be added as needed (e.g., task_assignees)
-CREATE POLICY "Users can manage task assignees on boards they can edit"
-    ON task_assignees FOR ALL
-    USING (EXISTS (
-        SELECT 1
-        FROM tasks t
-        JOIN board_members bm ON t.board_id = bm.board_id
-        WHERE t.id = task_assignees.task_id
-        AND bm.user_id = auth.get_user_id()
-        AND (bm.role = 'admin' OR bm.role = 'editor')
-    ));
+CREATE POLICY "Users can insert boards for themselves" ON public.boards
+  FOR INSERT WITH CHECK (owner_id = public.get_user_app_id());
+
+CREATE POLICY "Board admins can update their boards" ON public.boards
+  FOR UPDATE USING (EXISTS (
+    SELECT 1 FROM public.board_members
+    WHERE board_members.board_id = boards.id AND board_members.user_id = public.get_user_app_id() AND board_members.role = 'admin'
+  )) WITH CHECK (EXISTS (
+    SELECT 1 FROM public.board_members
+    WHERE board_members.board_id = boards.id AND board_members.user_id = public.get_user_app_id() AND board_members.role = 'admin'
+  ));
+
+CREATE POLICY "Board admins can delete their boards" ON public.boards
+  FOR DELETE USING (EXISTS (
+    SELECT 1 FROM public.board_members
+    WHERE board_members.board_id = boards.id AND board_members.user_id = public.get_user_app_id() AND board_members.role = 'admin'
+  ));
+
+-- BOARD_MEMBERS:
+CREATE POLICY "Users can view memberships of boards they belong to" ON public.board_members
+  FOR SELECT USING (EXISTS (
+    SELECT 1 FROM public.board_members bm
+    WHERE bm.board_id = board_members.board_id AND bm.user_id = public.get_user_app_id()
+  ));
+
+CREATE POLICY "Board admins can manage members" ON public.board_members
+  FOR ALL USING (EXISTS (
+    SELECT 1 FROM public.board_members bm
+    WHERE bm.board_id = board_members.board_id AND bm.user_id = public.get_user_app_id() AND bm.role = 'admin'
+  ));
+
+-- STATUSES, TASKS, etc.
+CREATE POLICY "Users can manage items on boards they are members of" ON public.statuses
+  FOR ALL USING (EXISTS (
+    SELECT 1 FROM public.board_members
+    WHERE board_members.board_id = statuses.board_id AND board_members.user_id = public.get_user_app_id()
+  ));
+
+CREATE POLICY "Users can manage items on boards they are members of" ON public.tasks
+  FOR ALL USING (EXISTS (
+    SELECT 1 FROM public.board_members
+    WHERE board_members.board_id = tasks.board_id AND board_members.user_id = public.get_user_app_id()
+  ));
+
+CREATE POLICY "Users can manage items on boards they are members of" ON public.task_assignees
+  FOR ALL USING (EXISTS (
+    SELECT 1 FROM tasks t JOIN board_members bm ON t.board_id = bm.board_id
+    WHERE t.id = task_assignees.task_id AND bm.user_id = public.get_user_app_id()
+  ));

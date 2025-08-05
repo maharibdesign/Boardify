@@ -1,0 +1,17 @@
+---
+// This component is a template for client-side rendering.
+// It won't be used directly with an <TaskCard /> tag in Astro,
+// but its HTML structure will be cloned by our script.
+---
+<div class="task-card-template" style="display: none;">
+    <div 
+        class="task-card border border-border bg-card p-3 rounded-lg shadow-sm hover:border-primary cursor-pointer"
+        data-task-id=""
+    >
+        <p class="font-semibold mb-2" data-task-title></p>
+        <div class="flex items-center justify-between text-sm text-muted-foreground">
+            <span data-task-priority-indicator></span>
+            <span data-task-due-date></span>
+        </div>
+    </div>
+</div>

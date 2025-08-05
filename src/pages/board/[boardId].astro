@@ -1,0 +1,284 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import Header from '../../components/Header.astro';
+import TaskModal from '../../components/TaskModal.astro';
+import Column from '../../components/Column.astro';
+import TaskCard from '../../components/TaskCard.astro';
+
+const { boardId } = Astro.params;
+---
+
+<Layout title="Board View">
+    <Header title="Loading Board..." />
+    
+    <main class="flex-grow flex flex-col overflow-x-auto">
+        <!-- The HTML from Board.astro is now directly here -->
+        <div id="board-container" class="flex-grow p-4 flex gap-4 overflow-x-auto">
+            <div id="loading-indicator" class="text-center w-full p-8 text-muted-foreground">Loading board...</div>
+        </div>
+    </main>
+
+    <!-- Modals and templates are still included but hidden -->
+    <TaskModal />
+    <Column />
+    <TaskCard />
+
+    <!-- The SCRIPT from Board.astro is now directly here -->
+    <script define:vars={{ boardId }}>
+      import { supabase } from '../../lib/supabase';
+      import { logTwaEvent } from '../../lib/twa-analytics';
+      import Sortable from 'sortablejs';
+
+      // --- DOM Elements ---
+      const boardContainer = document.getElementById('board-container');
+      const loadingIndicator = document.getElementById('loading-indicator');
+      const headerTitle = document.querySelector('header h1');
+      
+      const columnTemplate = document.querySelector('.column-template .column');
+      const taskCardTemplate = document.querySelector('.task-card-template .task-card');
+
+      // --- Modal Elements ---
+      const taskModal = document.getElementById('task-modal');
+      const closeModalBtn = document.getElementById('close-modal-btn');
+      const cancelModalBtn = document.getElementById('cancel-modal-btn');
+      const taskForm = document.getElementById('task-form');
+      const taskIdInput = document.getElementById('task-id-input');
+      const taskTitleInput = document.getElementById('task-title-input');
+      const taskDescriptionInput = document.getElementById('task-description-input');
+      const taskPriorityInput = document.getElementById('task-priority-input');
+      const taskDueDateInput = document.getElementById('task-due-date-input');
+
+      let statuses = [];
+      let tasks = {}; // Tasks organized by statusId
+
+      // --- MAIN FUNCTION ---
+      async function initializeBoard() {
+        await fetchBoardData();
+        renderBoard();
+        setupRealtimeSubscriptions();
+        setupModalListeners();
+        logTwaEvent('board_viewed', { board_id: boardId });
+      }
+
+      // --- DATA FETCHING ---
+      async function fetchBoardData() {
+        // First, we need to sign in to Supabase to respect RLS policies
+        // This is a simplified example. In a real TWA, you'd validate initData
+        // and get a custom JWT from your backend.
+        const { data: { user } } = await supabase.auth.signInWithPassword({
+            email: 'test@boardify.app', // Using the test user we created
+            password: 'bc1219910228', // IMPORTANT: Replace with your test user's password
+        });
+
+        if (!user) {
+            boardContainer.innerHTML = `<p class="text-destructive text-center w-full">Authentication failed. Check credentials.</p>`;
+            return;
+        }
+
+        const { data: boardData, error: boardError } = await supabase
+          .from('boards')
+          .select('name')
+          .eq('id', boardId)
+          .single();
+
+        if (boardError || !boardData) {
+          boardContainer.innerHTML = `<p class="text-destructive text-center w-full">Error: Could not load board. You might not have access or the board doesn't exist.</p>`;
+          headerTitle.textContent = "Error";
+          return;
+        }
+        headerTitle.textContent = boardData.name;
+
+        const { data: statusesData, error: statusesError } = await supabase
+          .from('statuses')
+          .select('*')
+          .eq('board_id', boardId)
+          .order('position');
+
+        const { data: tasksData, error: tasksError } = await supabase
+          .from('tasks')
+          .select('*')
+          .eq('board_id', boardId)
+          .order('position');
+
+        if (statusesError || tasksError) {
+          console.error("Error fetching data:", statusesError || tasksError);
+          return;
+        }
+        
+        statuses = statusesData;
+        tasks = {};
+        statuses.forEach(status => tasks[status.id] = []);
+        tasksData.forEach(task => {
+            if (tasks[task.status_id]) {
+                tasks[task.status_id].push(task);
+            }
+        });
+      }
+
+      // --- RENDERING ---
+      function renderBoard() {
+        boardContainer.innerHTML = '';
+        statuses.forEach(status => {
+          const columnEl = renderColumn(status);
+          boardContainer.appendChild(columnEl);
+        });
+        if (loadingIndicator) loadingIndicator.style.display = 'none';
+      }
+
+      function renderColumn(status) {
+        const columnNode = columnTemplate.cloneNode(true);
+        columnNode.dataset.columnId = status.id;
+        columnNode.querySelector('[data-column-title]').textContent = status.name;
+        
+        const taskListEl = columnNode.querySelector('.task-list');
+        tasks[status.id]?.forEach(task => {
+          const taskCardEl = renderTaskCard(task);
+          taskListEl.appendChild(taskCardEl);
+        });
+
+        new Sortable(taskListEl, {
+          group: 'shared',
+          animation: 150,
+          ghostClass: 'opacity-50',
+          onEnd: handleTaskDrop,
+        });
+        
+        columnNode.querySelector('.add-task-btn').addEventListener('click', () => handleAddTask(status.id));
+        return columnNode;
+      }
+
+      function renderTaskCard(task) {
+        const taskCardNode = taskCardTemplate.cloneNode(true);
+        taskCardNode.dataset.taskId = task.id;
+        taskCardNode.querySelector('[data-task-title]').textContent = task.title;
+        
+        const priorityIndicator = taskCardNode.querySelector('[data-task-priority-indicator]');
+        priorityIndicator.textContent = `${task.priority.charAt(0).toUpperCase()}${task.priority.slice(1)}`;
+        if (task.priority === 'high') priorityIndicator.classList.add('text-red-500', 'font-semibold');
+        if (task.priority === 'low') priorityIndicator.classList.add('text-green-500');
+
+        if (task.due_date) {
+            taskCardNode.querySelector('[data-task-due-date]').textContent = new Date(task.due_date + 'T00:00:00').toLocaleDateString();
+        }
+        
+        taskCardNode.addEventListener('click', () => openTaskModal(task));
+        return taskCardNode;
+      }
+
+      // --- INTERACTIVITY & DRAG-AND-DROP ---
+      async function handleTaskDrop(evt) {
+        const taskId = evt.item.dataset.taskId;
+        const newStatusId = evt.to.closest('.column').dataset.columnId;
+        const newIndex = evt.newDraggableIndex;
+        
+        const { error } = await supabase
+          .from('tasks')
+          .update({ status_id: newStatusId, position: newIndex })
+          .eq('id', taskId);
+
+        if (error) {
+          console.error("Failed to update task position:", error);
+          alert("Error saving change. Please refresh.");
+        } else {
+          logTwaEvent('task_moved', { task_id: taskId, new_status_id: newStatusId });
+        }
+      }
+
+      // --- MODAL LOGIC ---
+      function setupModalListeners() {
+          closeModalBtn.onclick = closeTaskModal;
+          cancelModalBtn.onclick = closeTaskModal;
+          taskModal.onclick = (e) => { if (e.target === taskModal) closeTaskModal(); };
+          taskForm.onsubmit = handleSaveTask;
+      }
+
+      function openTaskModal(task = null) {
+          taskForm.reset();
+          taskPriorityInput.value = 'medium';
+          if (task) {
+              taskForm.querySelector('h2').textContent = "Edit Task";
+              taskIdInput.value = task.id;
+              taskTitleInput.value = task.title;
+              taskDescriptionInput.value = task.description || '';
+              taskPriorityInput.value = task.priority;
+              taskDueDateInput.value = task.due_date;
+          } else {
+              taskForm.querySelector('h2').textContent = "Create New Task";
+              taskIdInput.value = '';
+          }
+          taskModal.classList.remove('hidden');
+          taskModal.classList.add('flex');
+          taskTitleInput.focus();
+      }
+
+      function closeTaskModal() {
+          taskModal.classList.add('hidden');
+          taskModal.classList.remove('flex');
+      }
+      
+      function handleAddTask(statusId) {
+          openTaskModal();
+          taskForm.dataset.newStatusId = statusId;
+      }
+
+      async function handleSaveTask(e) {
+          e.preventDefault();
+          const id = taskIdInput.value;
+          const taskData = {
+              title: taskTitleInput.value,
+              description: taskDescriptionInput.value,
+              priority: taskPriorityInput.value,
+              due_date: taskDueDateInput.value || null,
+          };
+
+          let error;
+          if (id) {
+              const { error: updateError } = await supabase.from('tasks').update(taskData).eq('id', id);
+              error = updateError;
+              if(!error) logTwaEvent('task_updated', { task_id: id });
+          } else {
+              const statusId = taskForm.dataset.newStatusId;
+              const { data, error: countError } = await supabase.from('tasks').select('id', { count: 'exact' }).eq('status_id', statusId);
+              if (countError) { console.error(countError); return; }
+              
+              const { error: insertError } = await supabase.from('tasks').insert({
+                  ...taskData,
+                  board_id: boardId,
+                  status_id: statusId,
+                  position: data.length,
+              });
+              error = insertError;
+              if(!error) logTwaEvent('task_created', { board_id: boardId });
+          }
+
+          if (error) {
+              console.error('Error saving task:', error);
+              alert('Failed to save task.');
+          } else {
+              closeTaskModal();
+          }
+      }
+
+      // --- REALTIME ---
+      function setupRealtimeSubscriptions() {
+        const channel = supabase.channel(`board-${boardId}`);
+        channel
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `board_id=eq.${boardId}` }, async (payload) => {
+            console.log('Realtime change received for tasks!', payload);
+            await fetchBoardData();
+            renderBoard();
+          })
+          .subscribe((status, err) => {
+            if (status === 'SUBSCRIBED') {
+              console.log('Successfully subscribed to realtime channel!');
+            }
+            if (err) {
+                console.error('Realtime subscription error:', err);
+            }
+          });
+      }
+
+      // --- KICK IT OFF ---
+      initializeBoard();
+    </script>
+</Layout>

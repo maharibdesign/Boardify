@@ -1,0 +1,17 @@
+---
+// This component is a template for client-side rendering.
+---
+<div class="column-template" style="display: none;">
+    <div class="column flex flex-col w-72 md:w-80 flex-shrink-0">
+        <div class="flex items-center justify-between p-2 mb-2">
+            <h3 class="font-semibold text-lg" data-column-title></h3>
+            <button class="text-muted-foreground hover:text-primary">…</button>
+        </div>
+        <div class="task-list flex-grow min-h-[100px] bg-secondary/50 rounded-lg p-2 space-y-2">
+            <!-- Tasks will be inserted here by the script -->
+        </div>
+        <button class="add-task-btn mt-2 p-2 w-full text-left text-muted-foreground hover:bg-card rounded-lg transition-colors">
+            + Add a task
+        </button>
+    </div>
+</div>

@@ -1,0 +1,46 @@
+---
+// This is the modal for viewing/editing a task.
+// It is controlled entirely by client-side script.
+---
+<div id="task-modal" class="fixed inset-0 bg-black/60 z-50 hidden items-center justify-center">
+    <div id="task-modal-content" class="bg-card w-full max-w-lg rounded-lg shadow-xl p-6 m-4 transform transition-all" >
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-2xl font-bold">Task Details</h2>
+            <button id="close-modal-btn" class="text-muted-foreground hover:text-primary">×</button>
+        </div>
+        
+        <form id="task-form">
+            <input type="hidden" id="task-id-input">
+
+            <div class="mb-4">
+                <label for="task-title" class="block text-sm font-medium text-muted-foreground mb-1">Title</label>
+                <input type="text" id="task-title-input" class="w-full bg-input border border-border rounded-lg p-2" required>
+            </div>
+
+            <div class="mb-4">
+                <label for="task-description" class="block text-sm font-medium text-muted-foreground mb-1">Description</label>
+                <textarea id="task-description-input" rows="4" class="w-full bg-input border border-border rounded-lg p-2"></textarea>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                    <label for="task-priority" class="block text-sm font-medium text-muted-foreground mb-1">Priority</label>
+                    <select id="task-priority-input" class="w-full bg-input border border-border rounded-lg p-2">
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="task-due-date" class="block text-sm font-medium text-muted-foreground mb-1">Due Date</label>
+                    <input type="date" id="task-due-date-input" class="w-full bg-input border border-border rounded-lg p-2">
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-2 mt-6">
+                <button type="button" id="cancel-modal-btn" class="bg-secondary text-secondary-foreground py-2 px-4 rounded-lg">Cancel</button>
+                <button type="submit" id="save-task-btn" class="bg-primary text-primary-foreground font-semibold py-2 px-4 rounded-lg">Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
