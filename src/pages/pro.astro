@@ -1,0 +1,47 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Header from '../components/Header.astro';
+---
+
+<Layout title="Boardify Pro">
+    <Header title="Go Pro" />
+
+    <main class="container mx-auto p-4 md:p-8">
+        <div class="text-center">
+            <h1 class="text-4xl md:text-5xl font-extrabold text-primary">Boardify Pro</h1>
+            <p class="mt-4 text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto">
+                Supercharge your productivity with powerful features designed for teams and professionals.
+            </p>
+        </div>
+
+        <div class="mt-12 grid md:grid-cols-3 gap-8">
+            <!-- Feature 1 -->
+            <div class="bg-card border border-border rounded-lg p-6 text-center">
+                <div class="text-4xl mb-4">🚀</div>
+                <h3 class="text-xl font-bold">Unlimited Everything</h3>
+                <p class="mt-2 text-muted-foreground">Create unlimited boards and invite as many team members as you need.</p>
+            </div>
+            <!-- Feature 2 -->
+            <div class="bg-card border border-border rounded-lg p-6 text-center">
+                <div class="text-4xl mb-4">📊</div>
+                <h3 class="text-xl font-bold">Advanced Views</h3>
+                <p class="mt-2 text-muted-foreground">Visualize your projects with Gantt charts and export your data to CSV/PDF.</p>
+            </div>
+            <!-- Feature 3 -->
+            <div class="bg-card border border-border rounded-lg p-6 text-center">
+                <div class="text-4xl mb-4">🎨</div>
+                <h3 class="text-xl font-bold">Custom Fields</h3>
+                <p class="mt-2 text-muted-foreground">Add custom fields like checkboxes, text inputs, or dropdowns to your tasks.</p>
+            </div>
+        </div>
+
+        <div class="mt-12 text-center">
+             <button class="w-full max-w-md bg-primary text-primary-foreground font-bold py-4 px-8 rounded-lg text-xl hover:opacity-90 transition-opacity">
+                Upgrade for $5/month
+            </button>
+            <p class="mt-4 text-muted-foreground">
+                (This is a demo. To implement payments, connect to a Telegram Payment Bot.)
+            </p>
+        </div>
+    </main>
+</Layout>
