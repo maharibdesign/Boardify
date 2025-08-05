@@ -28,7 +28,54 @@ const { boardId } = Astro.params;
       import { supabase } from '../../lib/supabase';
       import { logTwaEvent } from '../../lib/twa-analytics';
       import Sortable from 'sortablejs';
+      
 
+      // ... inside the <script> tag in [boardId].astro ...
+
+async function fetchBoardData() {
+    console.log("Checkpoint 1: Starting fetchBoardData.");
+
+    const { data: { user }, error: authError } = await supabase.auth.signInWithPassword({
+        email: 'test@boardify.app',
+        password: 'YOUR_TEST_USER_PASSWORD', 
+    });
+
+    if (authError || !user) {
+        console.error("Authentication Error:", authError);
+        boardContainer.innerHTML = `<p class="text-destructive text-center w-full">Authentication failed. Check console for details.</p>`;
+        return;
+    }
+    console.log("Checkpoint 2: Authentication successful. User:", user);
+
+    const { data: boardData, error: boardError } = await supabase
+      .from('boards')
+      .select('name')
+      .eq('id', boardId)
+      .single();
+
+    if (boardError) console.error("Board Fetch Error:", boardError);
+    console.log("Checkpoint 3: Fetched board data.", boardData);
+
+    const { data: statusesData, error: statusesError } = await supabase
+      .from('statuses')
+      .select('*')
+      .eq('board_id', boardId)
+      .order('position');
+
+    if (statusesError) console.error("Statuses Fetch Error:", statusesError);
+    console.log("Checkpoint 4: Fetched statuses data.", statusesData);
+
+    const { data: tasksData, error: tasksError } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('board_id', boardId)
+      .order('position');
+
+    if (tasksError) console.error("Tasks Fetch Error:", tasksError);
+    console.log("Checkpoint 5: Fetched tasks data.", tasksData);
+
+    // ... rest of the function
+}
       // --- DOM Elements ---
       const boardContainer = document.getElementById('board-container');
       const loadingIndicator = document.getElementById('loading-indicator');
