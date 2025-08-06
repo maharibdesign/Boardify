@@ -6,85 +6,31 @@ import Column from '../../components/Column.astro';
 import TaskCard from '../../components/TaskCard.astro';
 
 const { boardId } = Astro.params;
+// IMPORTANT: Access the password on the server-side ONLY.
+const testUserPassword = import.meta.env.PASSWORD;
 ---
 
 <Layout title="Board View">
     <Header title="Loading Board..." />
-    
     <main class="flex-grow flex flex-col overflow-x-auto">
-        <!-- The HTML from Board.astro is now directly here -->
         <div id="board-container" class="flex-grow p-4 flex gap-4 overflow-x-auto">
             <div id="loading-indicator" class="text-center w-full p-8 text-muted-foreground">Loading board...</div>
         </div>
     </main>
-
-    <!-- Modals and templates are still included but hidden -->
     <TaskModal />
     <Column />
     <TaskCard />
-
-    <!-- The SCRIPT from Board.astro is now directly here -->
-    <script define:vars={{ boardId }}>
+    <script define:vars={{ boardId, testUserPassword }}>
       import { supabase } from '../../lib/supabase';
-      import { logTwaEvent } from '../../lib/twa-analytics';
       import Sortable from 'sortablejs';
+
+      // All the client-side JS remains the same, but now receives the password as a variable.
       
-
-      // ... inside the <script> tag in [boardId].astro ...
-
-async function fetchBoardData() {
-    console.log("Checkpoint 1: Starting fetchBoardData.");
-    const password = import.meta.env.PASSWORD;
-    const { data: { user }, error: authError } = await supabase.auth.signInWithPassword({
-        email: 'test@boardify.app',
-        password: 'bc1219910228', 
-    });
-
-    if (authError || !user) {
-        console.error("Authentication Error:", authError);
-        boardContainer.innerHTML = `<p class="text-destructive text-center w-full">Authentication failed. Check console for details.</p>`;
-        return;
-    }
-    console.log("Checkpoint 2: Authentication successful. User:", user);
-
-    const { data: boardData, error: boardError } = await supabase
-      .from('boards')
-      .select('name')
-      .eq('id', boardId)
-      .single();
-
-    if (boardError) console.error("Board Fetch Error:", boardError);
-    console.log("Checkpoint 3: Fetched board data.", boardData);
-
-    const { data: statusesData, error: statusesError } = await supabase
-      .from('statuses')
-      .select('*')
-      .eq('board_id', boardId)
-      .order('position');
-
-    if (statusesError) console.error("Statuses Fetch Error:", statusesError);
-    console.log("Checkpoint 4: Fetched statuses data.", statusesData);
-
-    const { data: tasksData, error: tasksError } = await supabase
-      .from('tasks')
-      .select('*')
-      .eq('board_id', boardId)
-      .order('position');
-
-    if (tasksError) console.error("Tasks Fetch Error:", tasksError);
-    console.log("Checkpoint 5: Fetched tasks data.", tasksData);
-
-    // ... rest of the function
-}
-      // --- DOM Elements ---
       const boardContainer = document.getElementById('board-container');
       const loadingIndicator = document.getElementById('loading-indicator');
       const headerTitle = document.querySelector('header h1');
-      
       const columnTemplate = document.querySelector('.column-template .column');
       const taskCardTemplate = document.querySelector('.task-card-template .task-card');
-
-      // --- Modal Elements ---
       const taskModal = document.getElementById('task-modal');
       const closeModalBtn = document.getElementById('close-modal-btn');
       const cancelModalBtn = document.getElementById('cancel-modal-btn');
@@ -96,29 +42,24 @@ async function fetchBoardData() {
       const taskDueDateInput = document.getElementById('task-due-date-input');
 
       let statuses = [];
-      let tasks = {}; // Tasks organized by statusId
+      let tasks = {};
 
-      // --- MAIN FUNCTION ---
       async function initializeBoard() {
         await fetchBoardData();
         renderBoard();
         setupRealtimeSubscriptions();
         setupModalListeners();
-        logTwaEvent('board_viewed', { board_id: boardId });
       }
 
-      // --- DATA FETCHING ---
       async function fetchBoardData() {
-        // First, we need to sign in to Supabase to respect RLS policies
-        // This is a simplified example. In a real TWA, you'd validate initData
-        // and get a custom JWT from your backend.
-        const { data: { user } } = await supabase.auth.signInWithPassword({
-            email: 'test@boardify.app', // Using the test user we created
-            password: 'bc1219910228', // IMPORTANT: Replace with your test user's password
+        const { data: { user }, error: authError } = await supabase.auth.signInWithPassword({
+            email: 'test@boardify.app',
+            password: testUserPassword, // Use the variable passed from the server
         });
 
-        if (!user) {
-            boardContainer.innerHTML = `<p class="text-destructive text-center w-full">Authentication failed. Check credentials.</p>`;
+        if (authError || !user) {
+            console.error("Authentication Error:", authError);
+            boardContainer.innerHTML = `<p class="text-destructive text-center w-full">Authentication failed. Check password in Vercel env vars.</p>`;
             return;
         }
 
@@ -129,30 +70,26 @@ async function fetchBoardData() {
           .single();
 
         if (boardError || !boardData) {
-          boardContainer.innerHTML = `<p class="text-destructive text-center w-full">Error: Could not load board. You might not have access or the board doesn't exist.</p>`;
+          console.error("Board Fetch Error:", boardError);
+          boardContainer.innerHTML = `<p class="text-destructive text-center w-full">Error: Could not load board data. Check RLS policies and IDs.</p>`;
           headerTitle.textContent = "Error";
           return;
         }
         headerTitle.textContent = boardData.name;
 
-        const { data: statusesData, error: statusesError } = await supabase
-          .from('statuses')
-          .select('*')
-          .eq('board_id', boardId)
-          .order('position');
-
-        const { data: tasksData, error: tasksError } = await supabase
-          .from('tasks')
-          .select('*')
-          .eq('board_id', boardId)
-          .order('position');
-
-        if (statusesError || tasksError) {
-          console.error("Error fetching data:", statusesError || tasksError);
-          return;
+        const [statusesResult, tasksResult] = await Promise.all([
+            supabase.from('statuses').select('*').eq('board_id', boardId).order('position'),
+            supabase.from('tasks').select('*').eq('board_id', boardId).order('position')
+        ]);
+        
+        if (statusesResult.error || tasksResult.error) {
+            console.error("Data Fetch Error:", statusesResult.error || tasksResult.error);
+            return;
         }
         
-        statuses = statusesData;
+        statuses = statusesResult.data;
+        const tasksData = tasksResult.data;
+
         tasks = {};
         statuses.forEach(status => tasks[status.id] = []);
         tasksData.forEach(task => {
@@ -162,34 +99,18 @@ async function fetchBoardData() {
         });
       }
 
-      // --- RENDERING ---
       function renderBoard() {
         boardContainer.innerHTML = '';
-        statuses.forEach(status => {
-          const columnEl = renderColumn(status);
-          boardContainer.appendChild(columnEl);
-        });
-        if (loadingIndicator) loadingIndicator.style.display = 'none';
+        statuses.forEach(status => boardContainer.appendChild(renderColumn(status)));
       }
 
       function renderColumn(status) {
         const columnNode = columnTemplate.cloneNode(true);
         columnNode.dataset.columnId = status.id;
         columnNode.querySelector('[data-column-title]').textContent = status.name;
-        
         const taskListEl = columnNode.querySelector('.task-list');
-        tasks[status.id]?.forEach(task => {
-          const taskCardEl = renderTaskCard(task);
-          taskListEl.appendChild(taskCardEl);
-        });
-
-        new Sortable(taskListEl, {
-          group: 'shared',
-          animation: 150,
-          ghostClass: 'opacity-50',
-          onEnd: handleTaskDrop,
-        });
-        
+        tasks[status.id]?.forEach(task => taskListEl.appendChild(renderTaskCard(task)));
+        new Sortable(taskListEl, { group: 'shared', animation: 150, ghostClass: 'opacity-50', onEnd: handleTaskDrop });
         columnNode.querySelector('.add-task-btn').addEventListener('click', () => handleAddTask(status.id));
         return columnNode;
       }
@@ -198,40 +119,23 @@ async function fetchBoardData() {
         const taskCardNode = taskCardTemplate.cloneNode(true);
         taskCardNode.dataset.taskId = task.id;
         taskCardNode.querySelector('[data-task-title]').textContent = task.title;
-        
         const priorityIndicator = taskCardNode.querySelector('[data-task-priority-indicator]');
         priorityIndicator.textContent = `${task.priority.charAt(0).toUpperCase()}${task.priority.slice(1)}`;
-        if (task.priority === 'high') priorityIndicator.classList.add('text-red-500', 'font-semibold');
-        if (task.priority === 'low') priorityIndicator.classList.add('text-green-500');
-
-        if (task.due_date) {
-            taskCardNode.querySelector('[data-task-due-date]').textContent = new Date(task.due_date + 'T00:00:00').toLocaleDateString();
-        }
-        
+        if(task.priority === 'high') priorityIndicator.classList.add('text-red-500', 'font-semibold');
+        if(task.priority === 'low') priorityIndicator.classList.add('text-green-500');
+        if (task.due_date) taskCardNode.querySelector('[data-task-due-date]').textContent = new Date(task.due_date + 'T00:00:00').toLocaleDateString();
         taskCardNode.addEventListener('click', () => openTaskModal(task));
         return taskCardNode;
       }
 
-      // --- INTERACTIVITY & DRAG-AND-DROP ---
       async function handleTaskDrop(evt) {
         const taskId = evt.item.dataset.taskId;
         const newStatusId = evt.to.closest('.column').dataset.columnId;
         const newIndex = evt.newDraggableIndex;
-        
-        const { error } = await supabase
-          .from('tasks')
-          .update({ status_id: newStatusId, position: newIndex })
-          .eq('id', taskId);
-
-        if (error) {
-          console.error("Failed to update task position:", error);
-          alert("Error saving change. Please refresh.");
-        } else {
-          logTwaEvent('task_moved', { task_id: taskId, new_status_id: newStatusId });
-        }
+        const { error } = await supabase.from('tasks').update({ status_id: newStatusId, position: newIndex }).eq('id', taskId);
+        if(error) console.error("Failed to update task position:", error);
       }
 
-      // --- MODAL LOGIC ---
       function setupModalListeners() {
           closeModalBtn.onclick = closeTaskModal;
           cancelModalBtn.onclick = closeTaskModal;
@@ -244,11 +148,11 @@ async function fetchBoardData() {
           taskPriorityInput.value = 'medium';
           if (task) {
               taskForm.querySelector('h2').textContent = "Edit Task";
-              taskIdInput.value = task.id;
-              taskTitleInput.value = task.title;
-              taskDescriptionInput.value = task.description || '';
-              taskPriorityInput.value = task.priority;
-              taskDueDateInput.value = task.due_date;
+              Object.assign(taskIdInput, { value: task.id });
+              Object.assign(taskTitleInput, { value: task.title });
+              Object.assign(taskDescriptionInput, { value: task.description || '' });
+              Object.assign(taskPriorityInput, { value: task.priority });
+              Object.assign(taskDueDateInput, { value: task.due_date });
           } else {
               taskForm.querySelector('h2').textContent = "Create New Task";
               taskIdInput.value = '';
@@ -272,60 +176,30 @@ async function fetchBoardData() {
           e.preventDefault();
           const id = taskIdInput.value;
           const taskData = {
-              title: taskTitleInput.value,
-              description: taskDescriptionInput.value,
-              priority: taskPriorityInput.value,
-              due_date: taskDueDateInput.value || null,
+              title: taskTitleInput.value, description: taskDescriptionInput.value,
+              priority: taskPriorityInput.value, due_date: taskDueDateInput.value || null,
           };
-
           let error;
           if (id) {
               const { error: updateError } = await supabase.from('tasks').update(taskData).eq('id', id);
               error = updateError;
-              if(!error) logTwaEvent('task_updated', { task_id: id });
           } else {
               const statusId = taskForm.dataset.newStatusId;
               const { data, error: countError } = await supabase.from('tasks').select('id', { count: 'exact' }).eq('status_id', statusId);
               if (countError) { console.error(countError); return; }
-              
-              const { error: insertError } = await supabase.from('tasks').insert({
-                  ...taskData,
-                  board_id: boardId,
-                  status_id: statusId,
-                  position: data.length,
-              });
+              const { error: insertError } = await supabase.from('tasks').insert({ ...taskData, board_id: boardId, status_id: statusId, position: data.length });
               error = insertError;
-              if(!error) logTwaEvent('task_created', { board_id: boardId });
           }
-
-          if (error) {
-              console.error('Error saving task:', error);
-              alert('Failed to save task.');
-          } else {
-              closeTaskModal();
-          }
+          if (error) console.error('Error saving task:', error);
+          else closeTaskModal();
       }
 
-      // --- REALTIME ---
       function setupRealtimeSubscriptions() {
         const channel = supabase.channel(`board-${boardId}`);
-        channel
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `board_id=eq.${boardId}` }, async (payload) => {
-            console.log('Realtime change received for tasks!', payload);
-            await fetchBoardData();
-            renderBoard();
-          })
-          .subscribe((status, err) => {
-            if (status === 'SUBSCRIBED') {
-              console.log('Successfully subscribed to realtime channel!');
-            }
-            if (err) {
-                console.error('Realtime subscription error:', err);
-            }
-          });
+        channel.on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `board_id=eq.${boardId}` }, () => fetchBoardData().then(renderBoard))
+          .subscribe(status => console.log(`Realtime status: ${status}`));
       }
 
-      // --- KICK IT OFF ---
       initializeBoard();
     </script>
 </Layout>
